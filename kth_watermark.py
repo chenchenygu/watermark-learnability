@@ -1,9 +1,7 @@
 import random
 from typing import Optional
 
-import scipy.stats
 import torch
-from transformers import AutoTokenizer
 
 DEFAULT_SEED = 42
 
@@ -80,56 +78,4 @@ class KTHWatermark:
         logits[..., :gumbel.shape[-1]] += gumbel  # (batch, seq_len, vocab_size)
         tokens = torch.argmax(logits, dim=-1)  # (batch, seq_len)
         return tokens
-    
-    # def detect(self, text: str, tokenizer) -> float:
-    #     """
-    #     Returns p-value, where null hypothesis is that the text is not watermarked.
-        
-    #     Under null hypothesis, each u is Uniform(0, 1), so each score (-log(1 - u)) is Exp(1).
-    #     So the sum of scores is distributed as Gamma(n_tokens, 1).
-    #     """
-    #     tokens = tokenizer.encode(text, return_tensors="pt", add_special_tokens=False)[0].to(self.device)  # (seq_len,)
-    #     seq_len = tokens.shape[0]
-    #     index = torch.arange(seq_len, device=tokens.device) % self.key_len  # (seq_len,)
-    #     u = self.uniform[index, tokens]  # (seq_len,)
-    #     score = torch.sum(-torch.log(1 - u + self.eps)).item()
-    #     p_value = scipy.stats.gamma.sf(score, seq_len, loc=0, scale=1)
-    #     return p_value
-
-
-class KTHWatermarkDetector:
-    def __init__(
-        self,
-        tokenizer: AutoTokenizer,
-        key_len: int,
-        seed: int = DEFAULT_SEED,
-        eps: float = 1e-20,
-    ):            
-        generator = torch.Generator()  # generator is always cpu for reproducibility
-        generator.manual_seed(seed)
-        vocab_size = len(tokenizer)
-        self.uniform = torch.clamp(
-            torch.rand((key_len, vocab_size), generator=generator, dtype=torch.float32),
-            min=eps,
-            max=1 - eps,
-        )
-        self.seed = seed
-        self.eps = eps
-        self.vocab_size = vocab_size
-        self.key_len = key_len
-
-    def detect(self, text: str, shift: int = 0) -> float:
-        """
-        Returns p-value, where null hypothesis is that the text is not watermarked.
-        
-        Under null hypothesis, each u is Uniform(0, 1), so each score (-log(1 - u)) is Exp(1).
-        So the sum of scores is distributed as Gamma(n_tokens, 1).
-        """
-        tokens = self.tokenizer.encode(text, return_tensors="pt", add_special_tokens=False)[0].to(self.device)  # (seq_len,)
-        seq_len = tokens.shape[0]
-        index = (torch.arange(seq_len, device=tokens.device) + shift) % self.key_len  # (seq_len,)
-        u = self.uniform[index, tokens]  # (seq_len,)
-        score = torch.sum(-torch.log(1 - u)).item()
-        p_value = scipy.stats.gamma.sf(score, seq_len, loc=0, scale=1)
-        return p_value
     

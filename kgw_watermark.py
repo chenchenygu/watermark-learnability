@@ -66,3 +66,4 @@ class KGWWatermark:
         # tokenizer vocab size and model outputs vocab size may be different
         logits[..., :mask.shape[-1]][mask] += self.delta
         return logits
+    

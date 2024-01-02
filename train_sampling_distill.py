@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding=utf-8
+# Adapted from https://github.com/huggingface/transformers/blob/main/examples/pytorch/language-modeling/run_clm.py
 # Copyright 2020 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -53,11 +54,8 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
-from train_distill import CustomTrainingArguments
+from train_logits_distill import CustomTrainingArguments
 
-
-# Will error if the minimal version of Transformers is not installed. Remove at your own risks.
-#check_min_version("4.30.0.dev0")
 
 require_version("datasets>=1.8.0", "To fix: pip install -r examples/pytorch/language-modeling/requirements.txt")
 

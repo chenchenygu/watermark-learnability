@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding=utf-8
+# Adapted from https://github.com/huggingface/transformers/blob/main/examples/pytorch/language-modeling/run_clm.py
 # Copyright 2020 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,7 +27,6 @@ import json
 import logging
 import math
 import os
-import random
 import sys
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -37,7 +37,6 @@ import datasets
 import evaluate
 import torch
 from datasets import load_dataset
-from tqdm import tqdm
 
 import transformers
 from torch.optim import Optimizer
@@ -62,13 +61,10 @@ from transformers.trainer_utils import FSDPOption, get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
-from aaronson_watermark import AaronsonWatermark
+from aar_watermark import AarWatermark
 from kgw_watermark import KGWWatermark
 from kth_watermark import KTHWatermark
 
-
-# Will error if the minimal version of Transformers is not installed. Remove at your own risks.
-#check_min_version("4.30.0.dev0")
 
 require_version("datasets>=1.8.0", "To fix: pip install -r examples/pytorch/language-modeling/requirements.txt")
 
@@ -82,7 +78,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class WatermarkType(StrEnum):
-    AARONSON = "aaronson"
+    AAR = "aar"
     KGW = "kgw"
     KTH = "kth"
 
@@ -166,7 +162,7 @@ class ModelArguments:
             "help": (
                 "Type of watermark to use."
             ),
-            "choices": [WatermarkType.AARONSON, WatermarkType.KGW, WatermarkType.KTH],
+            "choices": [WatermarkType.AAR, WatermarkType.KGW, WatermarkType.KTH],
         },
     )
     watermark_seed: int = field(
@@ -177,35 +173,11 @@ class ModelArguments:
             )
         },
     )
-    # gumbel_scale: float = field(
-    #     default=1.0,
-    #     metadata={
-    #         "help": (
-    #             "Multiplicative scale for gumbel watermark."
-    #         )
-    #     },
-    # )
-    # teacher_temperature: float = field(
-    #     default=1.0,
-    #     metadata={
-    #         "help": (
-    #             "Softmax temperature for teacher model."
-    #         )
-    #     },
-    # )
-    # student_temperature: float = field(
-    #     default=1.0,
-    #     metadata={
-    #         "help": (
-    #             "Softmax temperature for student model."
-    #         )
-    #     },
-    # )
-    aaronson_watermark_k: int = field(
+    aar_watermark_k: int = field(
         default=1,
         metadata={
             "help": (
-                "Number of previous tokens to hash for aaronson watermark."
+                "Number of previous tokens to hash for Aar watermark."
             )
         }
     )
@@ -407,7 +379,7 @@ class WatermarkDistillTrainer(Trainer):
     def __init__(
         self,
         teacher_model: PreTrainedModel,
-        watermarker: Union[AaronsonWatermark, KTHWatermark, KGWWatermark],
+        watermarker: Union[AarWatermark, KTHWatermark, KGWWatermark],
         argmax_watermark: bool = True,
         **kwargs,
     ):
@@ -436,7 +408,6 @@ class WatermarkDistillTrainer(Trainer):
         outputs = model(**inputs)
 
         # Save past state if it exists
-        # TODO: this needs to be fixed and made cleaner later.
         if self.args.past_index >= 0:
             self._past = outputs[self.args.past_index]
 
@@ -913,14 +884,14 @@ def main():
             return metric.compute(predictions=preds, references=labels)
         
     # Initialize watermarker
-    if model_args.watermark_type == WatermarkType.AARONSON:
-        watermarker = AaronsonWatermark(
+    if model_args.watermark_type == WatermarkType.AAR:
+        watermarker = AarWatermark(
             vocab_size=len(tokenizer),
-            k=model_args.aaronson_watermark_k,
+            k=model_args.aar_watermark_k,
             seed=model_args.watermark_seed,
             device=device,
         )
-        assert model_args.argmax_watermark, "Aaronson watermark only supports argmax watermarking"
+        assert model_args.argmax_watermark, "Aar watermark only supports argmax watermarking"
     elif model_args.watermark_type == WatermarkType.KTH:
         watermarker = KTHWatermark(
             vocab_size=len(tokenizer),

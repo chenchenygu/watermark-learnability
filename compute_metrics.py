@@ -9,9 +9,8 @@ from torch.nn import CrossEntropyLoss
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from tqdm import tqdm
 
-from kgw_watermarking.watermark_reliability_release.watermark_processor import WatermarkLogitsProcessor, WatermarkDetector
-from kth_watermark import KTHWatermark
-from aaronson_watermark import AaronsonWatermark, AaronsonWatermarkDetector
+from kgw_watermarking.watermark_reliability_release.watermark_processor import WatermarkDetector
+from aar_watermark import AarWatermarkDetector
 
 DEFAULT_SEED = 42
 
@@ -21,6 +20,8 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument("--tokenizer_name", type=str, required=True)
 parser.add_argument("--watermark_tokenizer_name", type=str, default=None)
+parser.add_argument("--truncate", action="store_true", default=False)
+parser.add_argument("--num_tokens", type=int, default=200)
 parser.add_argument("--lm_score_model_name", type=str, required=True)
 parser.add_argument("--input_file", type=str, required=True)
 parser.add_argument("--output_file", type=str, required=True)
@@ -76,33 +77,27 @@ for model_name, sd in tqdm(samples_dict.items()):
         #continue
         print(f"{model_name}, no watermark config, parsing string")
         watermark_config = {}
-    if 'aaronson' in model_name or "k" in watermark_config:
+    if 'aar' in model_name or "k" in watermark_config:
         if not watermark_config:
-            aar_s = "aaronson_k"
+            aar_s = "aar-k"
             k = int(model_name[model_name.find(aar_s) + len(aar_s)])
             seed = DEFAULT_SEED
             print(f"{k=}, {seed=}")
-            detector = AaronsonWatermarkDetector(
+            detector = AarWatermarkDetector(
                 k=k,
                 seed=seed,
                 tokenizer=tokenizer,
             )
         else:
-            detector = AaronsonWatermarkDetector(
+            detector = AarWatermarkDetector(
                 k=watermark_config["k"],
                 seed=watermark_config.get("seed", DEFAULT_SEED),
                 tokenizer=tokenizer,
             )
     elif 'kth' in model_name:
+        # KTH detection in kth_watermarking/compute_kth_scores.py, takes long time
         print(f"Skipping {model_name}, KTH watermark")
         continue
-        # detector = KTHWatermark(
-        #     vocab_size=watermark_config['vocab_size'],
-        #     key_len=watermark_config['key_len'],
-        #     seed=watermark_config['seed'],
-        #     store_uniform=True,
-        #     device="cpu",
-        # )
     elif 'kgw' in model_name or "gamma" in watermark_config:
         print(f"gamma = {watermark_config.get('gamma', 0.25)}") 
         detector = WatermarkDetector(
@@ -117,13 +112,18 @@ for model_name, sd in tqdm(samples_dict.items()):
         print(f"Skipping {model_name}, didn't match if statements")
         continue
     
-    # if 'kth' in model_name:
-    #     samples = data['samples'][model_name]['full_model_text']
-    # else:
     samples = samples_dict[model_name]['model_text']
     scores = []
 
     for s in tqdm(samples):
+        if args.truncate:
+            tokens = tokenizer(
+                s,
+                add_special_tokens=False,
+                truncation=True,
+                max_length=args.num_tokens,
+            )["input_ids"]
+            s = tokenizer.decode(tokens, skip_special_tokens=True)
         score = detector.detect(s)
         if 'kgw' in model_name:
             score = score['p_value']
@@ -159,10 +159,6 @@ def compute_seq_rep_n(samples, n=3):
         f"mean_seq_rep_{n}": mean_rep,
         f"list_seq_rep_{n}": n_gram_reps,
     }
-    # print(f"{n}-gram median rep per sample: {median_rep}")
-    # print(f"{n}-gram mean rep per sample: {mean_rep}")
-    
-    # return median_rep
 
 def compute_total_rep_n(samples, n=3):
     """compute total-rep-n metric"""
@@ -197,7 +193,6 @@ gpt2_tokenizer = AutoTokenizer.from_pretrained('gpt2')
 
 for s in full_human_text:
     tokens = gpt2_tokenizer(s, truncation=True, max_length=args.mauve_max_length, add_special_tokens=False)["input_ids"]
-    #print(f"{len(tokens)=}")
     if len(tokens) >= args.mauve_max_length:
         full_p_text.append(gpt2_tokenizer.decode(tokens, skip_special_tokens=True))
 
@@ -285,10 +280,3 @@ for name, sd in tqdm(samples_dict.items()):
 
 
 save_data()
-
-
-# os.makedirs(os.path.dirname(args.output_file), exist_ok=True)
-
-# with open(args.output_file, "w") as f:
-#     print(f"Writing output to {args.output_file}")
-#     json.dump(data, f, indent=4)

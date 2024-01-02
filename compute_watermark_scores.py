@@ -3,15 +3,12 @@ import os
 import json
 
 import numpy as np
-import mauve
 import torch
-from torch.nn import CrossEntropyLoss
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer
 from tqdm import tqdm
 
-from kgw_watermarking.watermark_reliability_release.watermark_processor import WatermarkLogitsProcessor, WatermarkDetector
-from kth_watermark import KTHWatermark
-from aaronson_watermark import AaronsonWatermark, AaronsonWatermarkDetector
+from kgw_watermarking.watermark_reliability_release.watermark_processor import WatermarkDetector
+from aar_watermark import AarWatermarkDetector
 
 DEFAULT_SEED = 42
 
@@ -41,7 +38,6 @@ with open(args.input_file, "r") as f:
     data = json.load(f)
 
 samples_dict = data["samples"]
-#prompt_length = data["prompt_length"]
 
 if args.watermark_tokenizer_name is None:
     args.watermark_tokenizer_name = args.tokenizer_name
@@ -63,7 +59,6 @@ def save_data():
         json.dump(data, f, indent=4)
 
 
-
 # compute watermark p-values
 for model_name, sd in tqdm(samples_dict.items()):
     if 'watermark_config' in samples_dict[model_name]:
@@ -71,37 +66,29 @@ for model_name, sd in tqdm(samples_dict.items()):
         if isinstance(watermark_config, list):
             watermark_config = watermark_config[0]
     else:
-        #print(f"Skipping {model_name}, no watermark config")
-        #continue
         print(f"{model_name}, no watermark config, parsing string")
         watermark_config = {}
-    if 'aaronson' in model_name or "k" in watermark_config:
+    if 'aar' in model_name or "k" in watermark_config:
         if not watermark_config:
-            aar_s = "aaronson_k"
+            aar_s = "aar-k"
             k = int(model_name[model_name.find(aar_s) + len(aar_s)])
             seed = DEFAULT_SEED
             print(f"{k=}, {seed=}")
-            detector = AaronsonWatermarkDetector(
+            detector = AarWatermarkDetector(
                 k=k,
                 seed=seed,
                 tokenizer=tokenizer,
             )
         else:
-            detector = AaronsonWatermarkDetector(
+            detector = AarWatermarkDetector(
                 k=watermark_config["k"],
                 seed=watermark_config.get("seed", DEFAULT_SEED),
                 tokenizer=tokenizer,
             )
     elif 'kth' in model_name:
+        # KTH detection in kth_watermarking/compute_kth_scores.py, takes long time
         print(f"Skipping {model_name}, KTH watermark")
         continue
-        # detector = KTHWatermark(
-        #     vocab_size=watermark_config['vocab_size'],
-        #     key_len=watermark_config['key_len'],
-        #     seed=watermark_config['seed'],
-        #     store_uniform=True,
-        #     device="cpu",
-        # )
     elif 'kgw' in model_name or "gamma" in watermark_config:
         print(f"gamma = {watermark_config.get('gamma', 0.25)}") 
         detector = WatermarkDetector(
@@ -116,9 +103,6 @@ for model_name, sd in tqdm(samples_dict.items()):
         print(f"Skipping {model_name}, didn't match if statements")
         continue
     
-    # if 'kth' in model_name:
-    #     samples = data['samples'][model_name]['full_model_text']
-    # else:
     samples = samples_dict[model_name]['model_text']
     scores = []
 
