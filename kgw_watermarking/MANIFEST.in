@@ -1,7 +1,0 @@
-# added manually
-include *.py
-include *.json
-include *.md
-
-global-exclude *.pyc
-global-exclude __pycache__

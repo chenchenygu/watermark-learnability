@@ -6,7 +6,7 @@ from typing import Dict
 import torch
 from datasets import load_dataset
 from tqdm import tqdm
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM, set_seed
 
 
 DEFAULT_PAD_TOKEN = "[PAD]"
@@ -25,13 +25,13 @@ parser.add_argument("--dataset_config_name", type=str, default=None)
 parser.add_argument("--dataset_split", type=str, default="test")
 parser.add_argument("--dataset_num_skip", type=int, default=0)
 parser.add_argument("--data_field", type=str, default="text")
-parser.add_argument("--num_samples", type=int, default=1000)
-parser.add_argument("--min_new_tokens", type=int, default=None)
-parser.add_argument("--max_new_tokens", type=int, default=None)
+parser.add_argument("--num_samples", type=int, default=5000)
+parser.add_argument("--min_new_tokens", type=int, default=200)
+parser.add_argument("--max_new_tokens", type=int, default=200)
 parser.add_argument("--temperature", type=float, default=1.0)
 parser.add_argument("--top_p", type=float, default=1.0)
 parser.add_argument("--top_k", type=int, default=0)
-parser.add_argument("--prompt_length", type=int, default=10)
+parser.add_argument("--prompt_length", type=int, default=50)
 parser.add_argument("--batch_size", type=int, default=32)
 parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--streaming", action="store_true", default=False)
@@ -78,7 +78,6 @@ def get_prompts(args) -> Dict:
         ).to(device)
         examples["prompt_text"] = tokenizer.batch_decode(prompt["input_ids"], skip_special_tokens=True)
         examples["input_ids"] = prompt["input_ids"]
-        print(type(examples["input_ids"]))
         examples["attention_mask"] = prompt["attention_mask"]
         examples["text_completion"] = tokenizer.batch_decode(
             trunc_tokens["input_ids"][:, args.prompt_length:], skip_special_tokens=True
@@ -99,15 +98,17 @@ def get_prompts(args) -> Dict:
     for batch in dataloader:
         if len(human_text) >= args.num_samples:
             break
-        if (type(batch['input_ids']) == list):
-            batch['input_ids'] = torch.stack(batch['input_ids'], dim=1).to(device)
-        if (type(batch['attention_mask']) == list):
-            batch['attention_mask'] = torch.stack(batch['attention_mask'], dim=1).to(device)
-        print(batch['input_ids'].shape)
+        if (type(batch["input_ids"]) == list):
+            batch["input_ids"] = torch.stack(batch["input_ids"], dim=1).to(device)
+        if (type(batch["attention_mask"]) == list):
+            batch["attention_mask"] = torch.stack(batch["attention_mask"], dim=1).to(device)
         prompts.append(batch)
         human_text.extend(batch["text_completion"])
         prompt_text.extend(batch["prompt_text"])
         full_human_text.extend(batch["text"])
+    human_text = human_text[:args.num_samples]
+    prompt_text = prompt_text[:args.num_samples]
+    full_human_text = full_human_text[:args.num_samples]
     return {
         "prompts": prompts,
         "human_text": human_text,
@@ -146,9 +147,10 @@ def generate_samples(model_name, args, prompts) -> Dict:
                 temperature=args.temperature,
                 top_p=args.top_p,
                 top_k=args.top_k,
+                pad_token_id=tokenizer.eos_token_id,
             )
 
-            n_input_tokens = batch['input_ids'].shape[1]
+            n_input_tokens = batch["input_ids"].shape[1]
             model_text.extend(tokenizer.batch_decode(outputs[:, n_input_tokens:], skip_special_tokens=True))
             full_model_text.extend(tokenizer.batch_decode(outputs, skip_special_tokens=True))
 
@@ -156,6 +158,8 @@ def generate_samples(model_name, args, prompts) -> Dict:
     torch.cuda.empty_cache()
     
     # model_text discards the prompt, full_model_text contains the prompt
+    model_text = model_text[:args.num_samples]
+    full_model_text = full_model_text[:args.num_samples]
     return {"model_text": model_text, "full_model_text": full_model_text}
 
 
@@ -179,6 +183,7 @@ prompt_text = prompts_dict["prompt_text"]
 full_human_text = prompts_dict["full_human_text"]
 
 for model_name in tqdm(args.model_names):
+    set_seed(args.seed)
     simplified_model_name = [s for s in model_name.split("/") if s][-1]
     print(f"Generating samples for model {simplified_model_name}")
     if simplified_model_name in samples_dict:

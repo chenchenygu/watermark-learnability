@@ -1,0 +1,35 @@
+[
+    {
+        "type": "kgw",
+        "gamma": 0.25,
+        "kgw_device": "cpu",
+        "seeding_scheme": "simple_0"
+    },
+    {
+        "type": "kgw",
+        "gamma": 0.25,
+        "kgw_device": "cpu",
+        "seeding_scheme": "simple_1"
+    },
+    {
+        "type": "kgw",
+        "gamma": 0.25,
+        "kgw_device": "cpu",
+        "seeding_scheme": "simple_2"
+    },
+    {
+        "type": "aar",
+        "seed": 42,
+        "k": 2
+    },
+    {
+        "type": "aar",
+        "seed": 42,
+        "k": 3
+    },
+    {
+        "type": "aar",
+        "seed": 42,
+        "k": 4
+    }
+]

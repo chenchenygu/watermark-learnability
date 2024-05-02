@@ -23,6 +23,7 @@ https://huggingface.co/models?filter=text-generation
 """
 # You can also adapt this script on your own causal language modeling task. Pointers for this are left as comments.
 
+import functools
 import json
 import logging
 import math
@@ -30,7 +31,7 @@ import os
 import sys
 from dataclasses import dataclass, field
 from itertools import chain
-from typing import Optional
+from typing import Optional, Union
 
 import datasets
 import evaluate
@@ -45,6 +46,7 @@ from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     HfArgumentParser,
+    PreTrainedModel,
     Trainer,
     TrainingArguments,
     default_data_collator,
@@ -52,9 +54,15 @@ from transformers import (
     set_seed,
 )
 from transformers.testing_utils import CaptureLogger
-from transformers.trainer_utils import get_last_checkpoint
+from transformers.trainer_pt_utils import get_module_class_from_name
+from transformers.trainer_utils import FSDPOption, get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
+
+from watermarks.aar.aar_watermark import AarWatermark
+from watermarks.kgw.kgw_watermark import KGWWatermark
+from watermarks.kth.kth_watermark import KTHWatermark
+from watermarks.watermark_types import WatermarkType
 
 
 require_version("datasets>=1.8.0", "To fix: pip install -r examples/pytorch/language-modeling/requirements.txt")
@@ -64,6 +72,8 @@ logger = logging.getLogger(__name__)
 
 MODEL_CONFIG_CLASSES = list(MODEL_FOR_CAUSAL_LM_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 @dataclass
@@ -139,6 +149,65 @@ class ModelArguments:
             )
         },
     )
+    watermark_type: WatermarkType = field(
+        default=None,
+        metadata={
+            "help": (
+                "Type of watermark to use."
+            ),
+            "choices": [WatermarkType.AAR, WatermarkType.KGW, WatermarkType.KTH],
+        },
+    )
+    watermark_seed: int = field(
+        default=42,
+        metadata={
+            "help": (
+                "Seed for watermarking."
+            )
+        },
+    )
+    aar_watermark_k: int = field(
+        default=1,
+        metadata={
+            "help": (
+                "Number of previous tokens to hash for Aar watermark."
+            )
+        }
+    )
+    kth_watermark_key_len: int = field(
+        default=256,
+        metadata={
+            "help": (
+                "Key length for KTH watermark."
+            )
+        }
+    )
+    kth_watermark_num_shifts: int = field(
+        default=1,
+        metadata={
+            "help": (
+                "Number of possible shifts for KTH watermark."
+            )
+        }
+    )
+    kgw_watermark_gamma: float = field(
+        default=0.5,
+        metadata={
+            "help": "Gamma for watermark, i.e. proportion of vocab that is greenlist."
+        },
+    )
+    kgw_watermark_delta: float = field(
+        default=2.0,
+        metadata={
+            "help": "Delta for watermark, i.e. value to add to logits in greenlist."
+        },
+    )
+    kgw_watermark_seeding_scheme: str = field(
+        default="simple_1",
+        metadata={
+            "help": "Seeding scheme to use for watermark. See kgw_watermarking for more details."
+        },
+    )
 
     def __post_init__(self):
         if self.config_overrides is not None and (self.config_name is not None or self.model_name_or_path is not None):
@@ -209,10 +278,6 @@ class DataTrainingArguments:
     keep_linebreaks: bool = field(
         default=True, metadata={"help": "Whether to keep line breaks when using TXT files or not."}
     )
-    group_texts: bool = field(
-        default=True,
-        metadata={"help": "Concatenate texts in the datasets to have blocks of block_size."},
-    )
 
     def __post_init__(self):
         if self.streaming:
@@ -230,19 +295,92 @@ class DataTrainingArguments:
 
 
 @dataclass
-class SamplingDistillTrainingArguments(TrainingArguments):
-    """Add custom training arguments for sampling-based distillation."""
+class LogitsDistillTrainingArguments(TrainingArguments):
+    """Add some custom training arguments."""
     save_checkpoint_models: bool = field(
         default=False,
         metadata={"help": "Save model at every checkpoint, no deletion, no optimizer states."},
     )
-    watermark_config_file: Optional[str] = field(
-        default=None,
-        metadata={"help": "Watermark config file to save with model."},
-    )
 
 
-class SamplingDistillTrainer(Trainer):
+class WatermarkLogitsDistillTrainer(Trainer):
+    def __init__(
+        self,
+        teacher_model: PreTrainedModel,
+        watermarker: Union[AarWatermark, KTHWatermark, KGWWatermark],
+        argmax_watermark: bool = True,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.teacher_model = teacher_model
+        self.teacher_model = self._fsdp_teacher_model(self.teacher_model)
+        self.teacher_model.eval()
+        self.watermarker = watermarker
+        self.argmax_watermark = argmax_watermark
+        if self.argmax_watermark:
+            self.loss_fct = torch.nn.CrossEntropyLoss()
+        else:
+            self.loss_fct = torch.nn.KLDivLoss(reduction="batchmean", log_target=True)
+
+    def compute_loss(self, model, inputs, return_outputs=False):
+        """
+        Compute distillation loss.
+
+        How the loss is computed by Trainer. By default, all models return the loss in the first element.
+
+        Subclass and override for custom behavior.
+        """
+        if "labels" in inputs:
+            labels = inputs.pop("labels")
+
+        outputs = model(**inputs)
+
+        # Save past state if it exists
+        if self.args.past_index >= 0:
+            self._past = outputs[self.args.past_index]
+
+        with torch.no_grad():
+            teacher_outputs = self.teacher_model(**inputs)
+
+        # argmax watermark, use cross entropy loss against one-hot labels
+        if self.argmax_watermark:
+            watermark_tokens = self.watermarker.watermark_logits_argmax(
+                inputs["input_ids"],
+                teacher_outputs.logits,
+            )
+
+            # compute cross entropy loss
+            loss = self.loss_fct(
+                outputs.logits.view(-1, outputs.logits.shape[-1]),
+                watermark_tokens.view(-1),
+            )
+        else:  # if not argmax, do distillation against distorted distribution
+            # get watermarked logits
+            watermarked_logits = self.watermarker.watermark_logits(inputs["input_ids"], teacher_outputs.logits)
+
+            # compute distillation loss
+            loss = self.loss_fct(
+                torch.nn.functional.log_softmax(outputs.logits, dim=-1),
+                torch.nn.functional.log_softmax(watermarked_logits, dim=-1),
+            ) / outputs.logits.shape[1]
+
+        return (loss, outputs) if return_outputs else loss
+    
+
+    def _save(self, output_dir: Optional[str] = None, **kwargs):
+        super()._save(output_dir=output_dir, **kwargs)
+        try:
+            output_dir = output_dir if output_dir is not None else self.args.output_dir
+            watermark_config = {}
+            for k, v in vars(self.watermarker).items():
+                if isinstance(v, (str, int, float, bool, list)):
+                    watermark_config[k] = v
+            config_dir = os.path.join(output_dir, "watermark_config.json")
+            with open(config_dir, "w") as f:
+                json.dump(watermark_config, f)
+        except Exception as e:
+            print(f"Failed to save watermark config: {e}")
+
     def _save_checkpoint(self, *args, **kwargs):
         """
         If self.args.save_checkpoint_models is True, save model at every checkpoint, no optimizer states.
@@ -255,25 +393,63 @@ class SamplingDistillTrainer(Trainer):
             self.save_model(output_dir, _internal_call=True)
         super()._save_checkpoint(*args, **kwargs)
 
-    def _save(self, output_dir: Optional[str] = None, **kwargs):
-        super()._save(output_dir=output_dir, **kwargs)
-        try:
-            output_dir = output_dir if output_dir is not None else self.args.output_dir
-            with open(self.args.watermark_config_file, "r") as f:
-                watermark_config = json.load(f)
-            config_dir = os.path.join(output_dir, "watermark_config.json")
-            with open(config_dir, "w") as f:
-                json.dump(watermark_config, f)
-        except Exception as e:
-            print(f"Failed to save watermark config file: {e}")
+    def _fsdp_teacher_model(self, model):
+        if self.fsdp is not None:
+            # PyTorch FSDP!
+            from torch.distributed.fsdp.fully_sharded_data_parallel import CPUOffload
+            from torch.distributed.fsdp.fully_sharded_data_parallel import FullyShardedDataParallel as FSDP
+            from torch.distributed.fsdp.fully_sharded_data_parallel import MixedPrecision
+            from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy, transformer_auto_wrap_policy
 
+            if FSDPOption.OFFLOAD in self.args.fsdp:
+                cpu_offload = CPUOffload(offload_params=True)
+            else:
+                cpu_offload = CPUOffload(offload_params=False)
+
+            auto_wrap_policy = None
+            if FSDPOption.AUTO_WRAP in self.args.fsdp:
+                if self.args.fsdp_min_num_params > 0:
+                    auto_wrap_policy = functools.partial(
+                        size_based_auto_wrap_policy, min_num_params=self.args.fsdp_min_num_params
+                    )
+                elif self.args.fsdp_transformer_layer_cls_to_wrap is not None:
+                    transformer_cls_to_wrap = get_module_class_from_name(
+                        model, self.args.fsdp_transformer_layer_cls_to_wrap
+                    )
+                    if transformer_cls_to_wrap is None:
+                        raise Exception("Could not find the transformer layer class to wrap in the model.")
+                    auto_wrap_policy = functools.partial(
+                        transformer_auto_wrap_policy,
+                        # Transformer layer class to wrap
+                        transformer_layer_cls={transformer_cls_to_wrap},
+                    )
+            mixed_precision_policy = None
+            dtype = None
+            if self.args.fp16:
+                dtype = torch.float16
+            elif self.args.bf16:
+                dtype = torch.bfloat16
+            if dtype is not None:
+                mixed_precision_policy = MixedPrecision(param_dtype=dtype, reduce_dtype=dtype, buffer_dtype=dtype)
+            if type(model) != FSDP:
+                # XXX: Breaking the self.model convention but I see no way around it for now.
+                model = FSDP(
+                    model,
+                    sharding_strategy=self.fsdp,
+                    cpu_offload=cpu_offload,
+                    auto_wrap_policy=auto_wrap_policy,
+                    mixed_precision=mixed_precision_policy,
+                    device_id=self.args.device,
+                  )
+        return model
+    
 
 def main():
     # See all possible arguments in src/transformers/training_args.py
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
 
-    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, SamplingDistillTrainingArguments))
+    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, LogitsDistillTrainingArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         # If we pass only one argument to the script and it's the path to a json file,
         # let's parse it to get our arguments.
@@ -346,23 +522,23 @@ def main():
             use_auth_token=True if model_args.use_auth_token else None,
             streaming=data_args.streaming,
         )
-        if "validation" not in raw_datasets.keys() and not data_args.streaming:
-            raw_datasets["validation"] = load_dataset(
-                data_args.dataset_name,
-                data_args.dataset_config_name,
-                split=f"train[:{data_args.validation_split_percentage}%]",
-                cache_dir=model_args.cache_dir,
-                use_auth_token=True if model_args.use_auth_token else None,
-                streaming=data_args.streaming,
-            )
-            raw_datasets["train"] = load_dataset(
-                data_args.dataset_name,
-                data_args.dataset_config_name,
-                split=f"train[{data_args.validation_split_percentage}%:]",
-                cache_dir=model_args.cache_dir,
-                use_auth_token=True if model_args.use_auth_token else None,
-                streaming=data_args.streaming,
-            )
+        # if "validation" not in raw_datasets.keys():
+        #     raw_datasets["validation"] = load_dataset(
+        #         data_args.dataset_name,
+        #         data_args.dataset_config_name,
+        #         split=f"train[:{data_args.validation_split_percentage}%]",
+        #         cache_dir=model_args.cache_dir,
+        #         use_auth_token=True if model_args.use_auth_token else None,
+        #         streaming=data_args.streaming,
+        #     )
+        #     raw_datasets["train"] = load_dataset(
+        #         data_args.dataset_name,
+        #         data_args.dataset_config_name,
+        #         split=f"train[{data_args.validation_split_percentage}%:]",
+        #         cache_dir=model_args.cache_dir,
+        #         use_auth_token=True if model_args.use_auth_token else None,
+        #         streaming=data_args.streaming,
+        #     )
     else:
         data_files = {}
         dataset_args = {}
@@ -445,9 +621,6 @@ def main():
             "You are instantiating a new tokenizer from scratch. This is not supported by this script."
             "You can do it from another script, save it, and load it from here, using --tokenizer_name."
         )
-    
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
 
     if model_args.model_name_or_path:
         torch_dtype = (
@@ -465,8 +638,19 @@ def main():
             torch_dtype=torch_dtype,
             low_cpu_mem_usage=model_args.low_cpu_mem_usage,
         )
+        teacher_model = AutoModelForCausalLM.from_pretrained(
+            model_args.model_name_or_path,
+            from_tf=bool(".ckpt" in model_args.model_name_or_path),
+            config=config,
+            cache_dir=model_args.cache_dir,
+            revision=model_args.model_revision,
+            use_auth_token=True if model_args.use_auth_token else None,
+            torch_dtype=torch_dtype,
+            low_cpu_mem_usage=model_args.low_cpu_mem_usage,
+        )
     else:
         model = AutoModelForCausalLM.from_config(config)
+        teacher_model = AutoModelForCausalLM.from_config(config)
         n_params = sum({p.data_ptr(): p.numel() for p in model.parameters()}.values())
         logger.info(f"Training new model from scratch - Total size={n_params/2**20:.2f}M params")
 
@@ -489,17 +673,6 @@ def main():
 
     def tokenize_function(examples):
         with CaptureLogger(tok_logger) as cl:
-            output = tokenizer(examples[text_column_name], truncation=True, padding="max_length", max_length=data_args.block_size)
-        # clm input could be much much longer than block_size
-        if "Token indices sequence length is longer than the" in cl.out:
-            tok_logger.warning(
-                "^^^^^^^^^^^^^^^^ Please ignore the warning above - this long input will be chunked into smaller bits"
-                " before being passed to the model."
-            )
-        return output
-    
-    def tokenize_function_group_texts(examples):
-        with CaptureLogger(tok_logger) as cl:
             output = tokenizer(examples[text_column_name])
         # clm input could be much much longer than block_size
         if "Token indices sequence length is longer than the" in cl.out:
@@ -512,7 +685,7 @@ def main():
     with training_args.main_process_first(desc="dataset map tokenization"):
         if not data_args.streaming:
             tokenized_datasets = raw_datasets.map(
-                tokenize_function_group_texts if data_args.group_texts else tokenize_function,
+                tokenize_function,
                 batched=True,
                 num_proc=data_args.preprocessing_num_workers,
                 remove_columns=column_names,
@@ -521,7 +694,7 @@ def main():
             )
         else:
             tokenized_datasets = raw_datasets.map(
-                tokenize_function_group_texts if data_args.group_texts else tokenize_function,
+                tokenize_function,
                 batched=True,
                 remove_columns=column_names,
             )
@@ -544,7 +717,6 @@ def main():
         block_size = min(data_args.block_size, tokenizer.model_max_length)
 
     # Main data processing function that will concatenate all texts from our dataset and generate chunks of block_size.
-    
     def group_texts(examples):
         # Concatenate all texts.
         concatenated_examples = {k: list(chain(*examples[k])) for k in examples.keys()}
@@ -559,11 +731,6 @@ def main():
         }
         result["labels"] = result["input_ids"].copy()
         return result
-    
-    def no_group_texts(examples):
-        result = examples
-        result["labels"] = result["input_ids"].copy()
-        return result
 
     # Note that with `batched=True`, this map processes 1,000 texts together, so group_texts throws away a remainder
     # for each of those groups of 1,000 texts. You can adjust that batch_size here but a higher value might be slower
@@ -575,7 +742,7 @@ def main():
     with training_args.main_process_first(desc="grouping texts together"):
         if not data_args.streaming:
             lm_datasets = tokenized_datasets.map(
-                group_texts if data_args.group_texts else no_group_texts,
+                group_texts,
                 batched=True,
                 num_proc=data_args.preprocessing_num_workers,
                 load_from_cache_file=not data_args.overwrite_cache,
@@ -583,7 +750,7 @@ def main():
             )
         else:
             lm_datasets = tokenized_datasets.map(
-                group_texts if data_args.group_texts else no_group_texts,
+                group_texts,
                 batched=True,
             )
 
@@ -602,8 +769,10 @@ def main():
             raise ValueError("--do_eval requires a validation dataset")
         eval_dataset = lm_datasets["validation"]
         if data_args.max_eval_samples is not None:
-            max_eval_samples = min(len(eval_dataset), data_args.max_eval_samples)
-            eval_dataset = eval_dataset.select(range(max_eval_samples))
+            max_eval_samples = data_args.max_eval_samples
+            if not data_args.streaming:
+                max_eval_samples = min(len(eval_dataset), data_args.max_eval_samples)
+                eval_dataset = eval_dataset.select(range(max_eval_samples))
 
         def preprocess_logits_for_metrics(logits, labels):
             if isinstance(logits, tuple):
@@ -621,9 +790,53 @@ def main():
             labels = labels[:, 1:].reshape(-1)
             preds = preds[:, :-1].reshape(-1)
             return metric.compute(predictions=preds, references=labels)
+        
+    # Whether to use argmax watermarking, and train using cross-entropy loss vs one-hot labels.
+    argmax_watermark = None
+        
+    # Initialize watermarker
+    if model_args.watermark_type == WatermarkType.AAR:
+        watermarker = AarWatermark(
+            vocab_size=len(tokenizer),
+            k=model_args.aar_watermark_k,
+            seed=model_args.watermark_seed,
+            device=device,
+        )
+        argmax_watermark = True
+        assert argmax_watermark, "Aar watermark only supports argmax watermarking"
+    elif model_args.watermark_type == WatermarkType.KTH:
+        watermarker = KTHWatermark(
+            vocab_size=len(tokenizer),
+            key_len=model_args.kth_watermark_key_len,
+            seed=model_args.watermark_seed,
+            device=device,
+            num_shifts=model_args.kth_watermark_num_shifts,
+        )
+        argmax_watermark = True
+        assert argmax_watermark, "KTH watermark only supports argmax watermarking"
+    elif model_args.watermark_type == WatermarkType.KGW:
+        watermarker = KGWWatermark(
+            vocab=tokenizer.get_vocab().values(),
+            gamma=model_args.kgw_watermark_gamma,
+            delta=model_args.kgw_watermark_delta,
+            seeding_scheme=model_args.kgw_watermark_seeding_scheme,
+            tokenizer=tokenizer,
+            device=device,
+        )
+        argmax_watermark = False
+        assert not argmax_watermark, "KGW watermark only supports non-argmax watermarking"
+    else:
+        raise ValueError(f"Invalid watermark type: {model_args.watermark_type}")
+    
+    assert argmax_watermark is not None, "argmax_watermark must be set"
 
     # Initialize our Trainer
-    trainer = SamplingDistillTrainer(
+    teacher_model = teacher_model.to(device)
+
+    trainer = WatermarkLogitsDistillTrainer(
+        teacher_model=teacher_model,
+        watermarker=watermarker,
+        argmax_watermark=argmax_watermark,
         model=model,
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
@@ -646,8 +859,6 @@ def main():
             checkpoint = last_checkpoint
         train_result = trainer.train(resume_from_checkpoint=checkpoint)
         trainer.save_model()  # Saves the tokenizer too for easy upload
-        print("hello saving model...")
-        trainer._save()
 
         metrics = train_result.metrics
 
@@ -667,8 +878,11 @@ def main():
 
         metrics = trainer.evaluate()
 
-        max_eval_samples = data_args.max_eval_samples if data_args.max_eval_samples is not None else len(eval_dataset)
-        metrics["eval_samples"] = min(max_eval_samples, len(eval_dataset))
+        # max_eval_samples = data_args.max_eval_samples if data_args.max_eval_samples is not None else len(eval_dataset)
+        # metrics["eval_samples"] = min(max_eval_samples, len(eval_dataset))
+        if data_args.max_eval_samples is not None:
+            metrics["eval_samples"] = data_args.max_eval_samples
+
         try:
             perplexity = math.exp(metrics["eval_loss"])
         except OverflowError:
