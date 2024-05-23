@@ -15,7 +15,7 @@ bash scripts/train/train_llama_logit_distill.sh <watermark_type> <output_dir/> <
 
 ### Sampling-based watermark distillation
 
-To perform sampling-based watermark distillation, you can either use the training data we have uploaded to Hugging Face (listed in the top-level [README.md](/README.md#training-data-for-sampling-based-watermark-distillation))or generate the training data yourself. `generate_sampling_distill_train_data.sh` generates watermarked samples from the teacher Llama 2 7B to use as training data. We used 1 NVIDIA A100 80GB GPU. The script is run from the top-level directory as 
+To perform sampling-based watermark distillation, you can either use the training data we have uploaded to Hugging Face (listed in the top-level [README.md](/README.md#training-data-for-sampling-based-watermark-distillation)) or generate the training data yourself. `generate_sampling_distill_train_data.sh` generates watermarked samples from the teacher Llama 2 7B to use as training data. We used 1 NVIDIA A100 80GB GPU. The script is run from the top-level directory as
 ```
 bash scripts/train/generate_sampling_distill_train_data.sh <watermark_type> <llama_path>
 ```
