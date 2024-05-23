@@ -3,10 +3,19 @@ watermark=$1
 out_dir=$2
 port=$3
 llama=${4:-"meta-llama/Llama-2-7b-hf"}
+dataset_location=${5:-"hf"}
 
-train_file="data/sampling-distill-train-data/${watermark}_llama_2_7b_owt_len256_640k_train.json"
 watermark_config_file="experiments/watermark-configs/${watermark}-config.json"
 model_name="llama-2-7b-sampling-watermark-distill-${watermark}"
+
+if [ "$dataset_location" = "hf" ]; then
+    dataset_args="--dataset_name cygu/sampling-distill-train-data-${watermark}"
+elif [ "$dataset_location" = "local" ]; then
+    dataset_args="--train_file data/sampling-distill-train-data/sampling-distill-train-data-${watermark}.json"
+else
+    echo "dataset_location must be either \"hf\" or \"local\". Received ${dataset_location}."
+    exit 1
+fi
 
 if [[ "$watermark" == kth* ]]; then
     group_texts="False"
@@ -16,7 +25,7 @@ fi
 
 torchrun --nproc_per_node=4 --master_port=${port} train_sampling_distill.py \
     --model_name_or_path "${llama}" \
-    --train_file "${train_file}" \
+    ${dataset_args} \
     --watermark_config_file "${watermark_config_file}" \
     --per_device_train_batch_size 8 \
     --gradient_accumulation_steps 4 \

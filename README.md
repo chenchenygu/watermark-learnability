@@ -1,6 +1,6 @@
 # On the Learnability of Watermarks for Language Models
 
-This repository contains code for the paper [On the Learnability of Watermarks for Language Models](https://arxiv.org/abs/2312.04469) by Chenchen Gu, Xiang Lisa Li, Percy Liang, and Tatsunori Hashimoto.
+This repository contains code for the ICLR 2024 paper [On the Learnability of Watermarks for Language Models](https://arxiv.org/abs/2312.04469) by Chenchen Gu, Xiang Lisa Li, Percy Liang, and Tatsunori Hashimoto.
 
 ### Setup
 
@@ -26,7 +26,7 @@ Code in the [`watermarks/kgw`](watermarks/kgw) directory is from [github.com/jwk
 
 ## Models
 
-Below are links to trained model weights from the paper's experiments (hosted on Hugging Face).
+Below are links to trained model weights from the paper's experiments (hosted on Hugging Face). They can also be found at this [Hugging Face collection](https://huggingface.co/collections/cygu/on-the-learnability-of-watermarks-for-language-models-663b6f7e077aba104d461497).
 
 ### Logit-based watermark distilled Llama 2 7B
 
@@ -72,3 +72,33 @@ Below are links to trained model weights from the paper's experiments (hosted on
 - [KTH s = 2](https://huggingface.co/cygu/pythia-1.4b-sampling-watermark-distill-kth-shift2)
 - [KTH s = 4](https://huggingface.co/cygu/pythia-1.4b-sampling-watermark-distill-kth-shift4)
 - [KTH s = 256](https://huggingface.co/cygu/pythia-1.4b-sampling-watermark-distill-kth-shift256)
+
+## Training data for sampling-based watermark distillation
+
+Below are links to the watermarked training data used for the paper's sampling-based watermark distillation experiments (hosted on Hugging Face). They can also be found at this [Hugging Face collection](https://huggingface.co/collections/cygu/on-the-learnability-of-watermarks-for-language-models-663b6f7e077aba104d461497).
+
+- [KGW ](https://huggingface.co/datasets/cygu/sampling-distill-train-data-kgw-k0-gamma0.25-delta1)$k = 0, \gamma = 0.25, \delta = 1$
+- [KGW ](https://huggingface.co/datasets/cygu/sampling-distill-train-data-kgw-k0-gamma0.25-delta2)$k = 0, \gamma = 0.25, \delta = 2$
+- [KGW ](https://huggingface.co/datasets/cygu/sampling-distill-train-data-kgw-k1-gamma0.25-delta1)$k = 1, \gamma = 0.25, \delta = 1$
+- [KGW ](https://huggingface.co/datasets/cygu/sampling-distill-train-data-kgw-k1-gamma0.25-delta2)$k = 1, \gamma = 0.25, \delta = 2$
+- [KGW ](https://huggingface.co/datasets/cygu/sampling-distill-train-data-kgw-k2-gamma0.25-delta2)$k = 2, \gamma = 0.25, \delta = 2$
+- [Aar k = 2](https://huggingface.co/datasets/cygu/sampling-distill-train-data-aar-k2)
+- [Aar k = 3](https://huggingface.co/datasets/cygu/sampling-distill-train-data-aar-k3)
+- [Aar k = 4](https://huggingface.co/datasets/cygu/sampling-distill-train-data-aar-k4)
+- [KTH s = 1](https://huggingface.co/datasets/cygu/sampling-distill-train-data-kth-shift1)
+- [KTH s = 2](https://huggingface.co/datasets/cygu/sampling-distill-train-data-kth-shift2)
+- [KTH s = 4](https://huggingface.co/datasets/cygu/sampling-distill-train-data-kth-shift4)
+- [KTH s = 256](https://huggingface.co/datasets/cygu/sampling-distill-train-data-kth-shift256)
+
+## Citation
+
+Please cite this paper using the following BibTex entry:
+```
+@inproceedings{gu2024learnability,
+    title={On the Learnability of Watermarks for Language Models},
+    author={Chenchen Gu and Xiang Lisa Li and Percy Liang and Tatsunori Hashimoto},
+    booktitle={The Twelfth International Conference on Learning Representations},
+    year={2024},
+    url={https://arxiv.org/abs/2312.04469}
+}
+```

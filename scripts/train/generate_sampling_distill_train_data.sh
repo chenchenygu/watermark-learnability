@@ -2,8 +2,8 @@
 watermark=$1
 llama=${2:-"meta-llama/Llama-2-7b-hf"}
 
-output_file="data/sampling-distill-train-data/${watermark}_llama_2_7b_owt_len256_640k.json"
-output_train_file="data/sampling-distill-train-data/${watermark}_llama_2_7b_owt_len256_640k_train.json"
+output_file="data/sampling-distill-train-data-dicts/${watermark}_llama_2_7b_owt_len256_640k_samples_dict.json"
+output_train_file="data/sampling-distill-train-data/sampling-distill-train-data-${watermark}.json"
 watermark_config_file="experiments/watermark-configs/${watermark}-config.json"
 
 python experiments/generate_sampling_distill_train_data.py \
