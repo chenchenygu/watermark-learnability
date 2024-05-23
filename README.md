@@ -1,6 +1,6 @@
 # On the Learnability of Watermarks for Language Models
 
-This repository contains code for the paper [On the Learnability of Watermarks for Language Models](https://arxiv.org/abs/2312.04469) by Chenchen Gu, Xiang Lisa Li, Percy Liang, and Tatsunori Hashimoto.
+This repository contains code for the ICLR 2024 paper [On the Learnability of Watermarks for Language Models](https://arxiv.org/abs/2312.04469) by Chenchen Gu, Xiang Lisa Li, Percy Liang, and Tatsunori Hashimoto.
 
 ### Setup
 
@@ -89,3 +89,16 @@ Below are links to the watermarked training data used for the paper's sampling-b
 - [KTH s = 2](https://huggingface.co/datasets/cygu/sampling-distill-train-data-kth-shift2)
 - [KTH s = 4](https://huggingface.co/datasets/cygu/sampling-distill-train-data-kth-shift4)
 - [KTH s = 256](https://huggingface.co/datasets/cygu/sampling-distill-train-data-kth-shift256)
+
+## Citation
+
+Please cite this paper using the following BibTex entry:
+```
+@inproceedings{gu2024learnability,
+    title={On the Learnability of Watermarks for Language Models},
+    author={Chenchen Gu and Xiang Lisa Li and Percy Liang and Tatsunori Hashimoto},
+    booktitle={The Twelfth International Conference on Learning Representations},
+    year={2024},
+    url={https://arxiv.org/abs/2312.04469}
+}
+```
