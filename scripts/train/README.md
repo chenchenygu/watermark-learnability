@@ -15,7 +15,7 @@ bash scripts/train/train_llama_logit_distill.sh <watermark_type> <output_dir/> <
 
 ### Sampling-based watermark distillation
 
-To perform sampling-based watermark distillation, first, `generate_sampling_distill_train_data.sh` generates watermarked samples from the teacher Llama 2 7B to use as training data. We used 1 NVIDIA A100 80GB GPU. The script is run from the top-level directory as 
+To perform sampling-based watermark distillation, you can either use the training data we have uploaded to Hugging Face (listed in the top-level [README.md](/README.md#training-data-for-sampling-based-watermark-distillation))or generate the training data yourself. `generate_sampling_distill_train_data.sh` generates watermarked samples from the teacher Llama 2 7B to use as training data. We used 1 NVIDIA A100 80GB GPU. The script is run from the top-level directory as 
 ```
 bash scripts/train/generate_sampling_distill_train_data.sh <watermark_type> <llama_path>
 ```
@@ -24,16 +24,17 @@ bash scripts/train/generate_sampling_distill_train_data.sh <watermark_type> <lla
 
 Then, to run sampling-based watermark distillation on Llama 2 7B as the student (on 4 A100 NVIDIA 80GB GPUs), the script is run as
 ```
-bash scripts/train/train_llama_sampling_distill.sh <watermark_type> <output_dir/> <master_port> <llama_path>
+bash scripts/train/train_llama_sampling_distill.sh <watermark_type> <output_dir/> <master_port> <llama_path> <dataset_location>
 ```
 - `watermark_type` specifies the watermarking strategy for training. The possible types are listed at the [end](#watermark-types) of this README.
 - `output_dir` specifies the directory where the model should be stored (with the trailing `/`). This should not include the model name itself, which is automatically computed by the script.
 - `master_port` is the port that is passed to `torchrun`. This can be more or less arbitrarily selected.
 - `llama_path` (optional) specifies the path where the base Llama 2 7B model weights are loaded from. Defaults to [`meta-llama/Llama-2-7b-hf`](https://huggingface.co/meta-llama/Llama-2-7b-hf), which downloads from Hugging Face.
+- `dataset_location` (optional) should be set to `hf` to download the training data from Hugging Face, or `local` if you generated the training data yourself in the previous step. Defaults to `hf`.
 
 To run sampling-based watermark distillation on Pythia 1.4B as the student (on 1 A100 NVIDIA 80GB GPU), the script is similarly run as
 ```
-bash scripts/train/train_pythia_sampling_distill.sh <watermark_type> <output_dir/> <master_port> <pythia_path>
+bash scripts/train/train_pythia_sampling_distill.sh <watermark_type> <output_dir/> <master_port> <pythia_path> <dataset_location>
 ```
 - `pythia_path` (optional) specifies the path where the base Pythia 1.4B model weights are loaded from. Defaults to [`EleutherAI/pythia-1.4b`](https://huggingface.co/EleutherAI/pythia-1.4b), which downloads from Hugging Face.
 

@@ -3,17 +3,17 @@ watermark=$1
 out_dir=$2
 port=$3
 pythia=${4:-"EleutherAI/pythia-1.4b"}
-dataset_origin=${5:-"hf"}
+dataset_location=${5:-"hf"}
 
 watermark_config_file="experiments/watermark-configs/${watermark}-config.json"
 model_name="pythia-1.4b-sampling-watermark-distill-${watermark}"
 
-if [ "$dataset_origin" = "hf" ]; then
+if [ "$dataset_location" = "hf" ]; then
     dataset_args="--dataset_name cygu/sampling-distill-train-data-${watermark}"
-elif [ "$dataset_origin" = "local" ]; then
+elif [ "$dataset_location" = "local" ]; then
     dataset_args="--train_file data/sampling-distill-train-data/sampling-distill-train-data-${watermark}.json"
 else
-    echo "dataset_origin must be either \"hf\" or \"local\". Received ${dataset_origin}."
+    echo "dataset_location must be either \"hf\" or \"local\". Received ${dataset_location}."
     exit 1
 fi
 
