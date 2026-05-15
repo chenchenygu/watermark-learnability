@@ -5,12 +5,12 @@ This repository contains code for the ICLR 2024 paper [On the Learnability of Wa
 ### Setup
 
 To install the necessary packages, first create a conda environment.
-```
+```shell
 conda create -n <env_name> python=3.11
 conda activate <env_name>
 ```
 Then, install the required packages with 
-```
+```shell
 pip install -r requirements.txt
 ```
 
@@ -93,12 +93,12 @@ Below are links to the watermarked training data used for the paper's sampling-b
 ## Citation
 
 Please cite this paper using the following BibTex entry:
-```
+```bibtex
 @inproceedings{gu2024learnability,
     title={On the Learnability of Watermarks for Language Models},
     author={Chenchen Gu and Xiang Lisa Li and Percy Liang and Tatsunori Hashimoto},
     booktitle={The Twelfth International Conference on Learning Representations},
     year={2024},
-    url={https://arxiv.org/abs/2312.04469}
+    url={https://openreview.net/forum?id=9k0krNzvlV}
 }
 ```
